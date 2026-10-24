@@ -216,7 +216,7 @@ python3 .agents/scripts/sandbox_reservation.py run \
 
 ### 5. 発火するワークフローを選ぶ
 
-対象は **リポジトリ内のデプロイ用ワークフロー 6 本のみ**。Lint や他用途のワークフローは動かさない。`deploy_manager.yml`（hosting manager）は #2087 で削除済み（フェーズ5で `deploy_support.yml` として新規追加予定）。
+対象は **リポジトリ内のデプロイ用ワークフロー 6 本のみ**。Lint や他用途のワークフローは動かさない。`deploy_manager.yml`（hosting manager）は #2087 で削除済み。運営画面のデプロイは `deploy_support.yml`（#2482 でレガシー `manager/` を削除）。
 
 | ファイル名 | ざっくりした対象 |
 |------------|------------------|

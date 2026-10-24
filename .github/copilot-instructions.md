@@ -12,15 +12,12 @@
 | :--------------------- | :--------------------- | :------------------------------------------- |
 | **/user**              | 一般ユーザー向けアプリ | Vue 3 + Vite + Vuetify 3                     |
 | **/partner**           | 飲食店向け管理画面     | Vue 3 + Vite + Vuetify 3                     |
+| **/support**           | 運営（サポーター）向け管理画面 | Vue 3 + Vite + Vuetify 3               |
 | **/functions/default** | バックエンドロジック   | Firebase Functions v2 (Node 24) + TypeScript |
 | **/common**            | 共有コード             | TypeScript (Schema, Utils)                   |
 | **/base**              | 共有UIコンポーネント   | Vue 3 (Materio Template)                     |
 
-### レガシー (Deprecated) — 新規コード生成時の参照禁止
-
-| パス         | 概要                      |
-| :----------- | :------------------------ |
-| **/manager** | 運営向け管理画面 (Legacy) |
+レガシー `/manager` は #2482 で削除した。運営画面の正本は `/support`。
 
 Slack / LINE bot および旧 legacy Functions は `functions/default` に統合済み（#2060 Phase 2/3）。
 

@@ -34,7 +34,6 @@ FIREBASERC="$(cat <<EOF
     "${PROJECT_ID}": {
       "hosting": {
         "partner": ["${PROJECT_ID}-admin"],
-        "manager": ["${PROJECT_ID}-manager"],
         "user": ["${PROJECT_ID}"],
         "terms": ["${PROJECT_ID}-terms"]
       }

@@ -86,11 +86,7 @@ AIエージェント向けプロジェクトガイド。
 | **/common**            | 共有コード             | TypeScript (Schema, Utils)                   |
 | **/base**              | 共有UIコンポーネント   | Vue 3 (Materio Template)                     |
 
-### レガシー (Deprecated) — 新規コード生成時の参照禁止
-
-| パス         | 概要                      |
-| :----------- | :------------------------ |
-| **/manager** | 運営向け管理画面 (Legacy)。Vue 3 で `/support` に再実装済み（#2087）。削除はフェーズ5 |
+レガシー `/manager` は #2482 で削除した。運営画面の正本は `/support`。
 
 Slack / LINE bot および旧 legacy Functions は `functions/default` に統合済み（#2060 Phase 2/3）。
 

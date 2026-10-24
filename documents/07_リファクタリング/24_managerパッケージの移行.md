@@ -1,5 +1,7 @@
 # support パッケージへの移行（レガシー manager 置換）
 
+> レガシー `manager/` は [#2482](https://github.com/nijuniinc/bokudeli-event-new/issues/2482) で削除した。運営画面の正本は `support/`。本ドキュメントは移行当時の背景を残す。
+
 > **実装仕様の正本は [documents/09_運営向け機能/03_managerパッケージの再実装.md](../09_運営向け機能/03_managerパッケージの再実装.md)。**
 > フェーズ1のスコープ・画面仕様・Rules 変更・PR 分割はそちらを参照すること。
 > 本ドキュメントは**移行の背景**（レガシー manager の技術的負債、デプロイできない要因、削除対象資産の棚卸し）を

@@ -12,6 +12,8 @@
   ユーザー向けメインアプリケーション (Vue3 + Vuetify3)
 - **`/partner`**  
   店舗（パートナー）向けアプリケーション (Vue3 + Vuetify3)
+- **`/support`**  
+  運営向け管理画面 (Vue3 + Vuetify3)
 - **`/curry`**  
   神田カレーグランプリ向けアプリケーション (Vue3 + Vuetify3)
 - **`/functions/default`**  
@@ -22,11 +24,7 @@
 - [`nijuniinc/bokudeli-event-batch`](https://github.com/nijuniinc/bokudeli-event-batch)  
   Firestore 既存データの backfill / migration など、アプリ本体とは分離して実行するバッチ処理用リポジトリです。
 
-以下のディレクトリは過去実装を今後新規構成に変更して行く予定のものです。
-基本的に新規更新は行わず、上記新規構成に従うように変更していくものとします。
-
-- **`manager`**  
-  運営向け管理画面（Vue 2 + Vuetify 2）
+レガシー `manager/` は #2482 で削除した。運営画面の正本は `/support`。
 
 ### Materio
 
