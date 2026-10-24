@@ -62,6 +62,8 @@ NOT (
 | 項目 | 値 |
 |------|-----|
 | 表示名 | `shokujii failed to fetch multi user` |
+| Policy ID | `5313453274644477173` |
+| リソース | `projects/bokudeli-event-dev/alertPolicies/5313453274644477173` |
 | 指標 | `logging.googleapis.com/user/client_failed_to_fetch` |
 | 指標定義 | [`monitoring/client-failed-to-fetch-metric.json`](./monitoring/client-failed-to-fetch-metric.json) |
 | ポリシー定義 | [`monitoring/shokujii-failed-to-fetch-multi-user-policy.json`](./monitoring/shokujii-failed-to-fetch-multi-user-policy.json) |
@@ -75,8 +77,10 @@ NOT (
 PromQL:
 
 ```
-count(sum by (user_id) (increase(logging_googleapis_com:user_client_failed_to_fetch[10m])) > 0) >= 5
+count(sum by (user_id) (increase(logging_googleapis_com:user_client_failed_to_fetch{monitored_resource="cloud_run_revision"}[10m])) > 0) >= 5
 ```
+
+`monitored_resource="cloud_run_revision"` が必要です。clientError のログは Cloud Run リビジョンで、この指定が無いとポリシー作成が `monitored_resource` の matcher 不足で拒否されます。
 
 `user_id` ラベルが時系列を分けるので、同じ人が何件出しても 1 人です。通知チャネルは `shokujii functions error` と同じものを付けます。
 

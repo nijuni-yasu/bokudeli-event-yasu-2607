@@ -6,7 +6,7 @@
     {
       "displayName": "10分以内にログインユーザーが5人以上",
       "conditionPrometheusQueryLanguage": {
-        "query": "count(sum by (user_id) (increase(logging_googleapis_com:user_client_failed_to_fetch[10m])) > 0) >= 5",
+        "query": "count(sum by (user_id) (increase(logging_googleapis_com:user_client_failed_to_fetch{monitored_resource=\"cloud_run_revision\"}[10m])) > 0) >= 5",
         "duration": "0s",
         "evaluationInterval": "60s"
       }
