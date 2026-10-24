@@ -70,7 +70,7 @@ Firebase Functions の実行ランタイム `nodejs20` が Deprecated となり�
 | 種別 | パス | 現在値 | 備考 |
 | :--- | :--- | :----- | :--- |
 | Functions ランタイム（正本） | `functions/default/package.json` `engines.node` | `"24"` | Firebase デプロイ時の実行ランタイム決定。**最重要** |
-| ローカル / CI Node | `.node-version`（ルート） | `24.19.0` | CI 全 workflow が `node-version-file: ./.node-version` を参照 |
+| ローカル / CI Node | `.node-version`（ルート） | `24.22.1` | CI 全 workflow が `node-version-file: ./.node-version` を参照。[#2481](https://github.com/nijuniinc/bokudeli-event-new/issues/2481) で 24.19.0 から更新 |
 | firebase.json runtime | `firebase.json` `functions[]` | **未指定** | package.json の `engines` に依存 |
 | TS node 設定 | `base/package.json` `@tsconfig/node24` + `user`/`partner`/`enterprise` の `tsconfig.node.json` | `@tsconfig/node24` | Vite 設定用 |
 | 型定義 | `base/package.json` `@types/node` | `^24` | 任意（整合性） |
@@ -78,7 +78,7 @@ Firebase Functions の実行ランタイム `nodejs20` が Deprecated となり�
 | TS target | `tsconfig.base.json` | `ES2020` | 本移行とは切り離す（別タスク推奨） |
 | ドキュメント | `AGENTS.md` / `CLAUDE.md`、`.github/copilot-instructions.md` | `Node 24` 表記 | 表記更新済み |
 
-**スコープ外**: `manager/.node-version`（`16.14.2`）は legacy（運営向け管理画面）。本対応の対象外。
+**追記（#2482）**: レガシー `manager/` は削除した。運営画面の正本は `/support`。
 
 **前提（問題なし）**:
 
@@ -106,6 +106,7 @@ Firebase Functions の実行ランタイム `nodejs20` が Deprecated となり�
 ### 3.2 ローカル / CI Node（必須）
 
 - [x] ルート `.node-version` を `20.19.1` → `24.19.0`（Node 24 LTS 最新パッチ。更新時は [Node.js 24 リリース](https://nodejs.org/en/blog/release/) を確認）
+- [x] ルート `.node-version` を `24.19.0` → `24.22.1`（[#2481](https://github.com/nijuniinc/bokudeli-event-new/issues/2481)。2026-10-21 セキュリティリリース）
 
   波及先 workflow（いずれも `node-version-file: ./.node-version`）:
 
