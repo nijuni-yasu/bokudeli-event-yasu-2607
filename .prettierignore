@@ -8,6 +8,3 @@ firebase.json
 
 // themes dires are associated with the materio, so they should not be formatted
 themes/
-
-// For legacy code that should not be formatted with this top level Prettier config
-/manager

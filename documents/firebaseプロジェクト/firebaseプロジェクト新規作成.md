@@ -157,7 +157,6 @@ terraform apply
 | `FIREBASERC`     | `.firebaserc` ファイルの中身（JSON形式）   |
 | `PARTNER_ENV`    | `partner/.env` の内容              |
 | `USER_ENV`       | `user/.env` の内容                 |
-| `MANAGER_ENV`    | `manager/.env` の内容              |
 | `FUNCTIONS_ENV`  | `functions/default/.env` の内容    |
 
 

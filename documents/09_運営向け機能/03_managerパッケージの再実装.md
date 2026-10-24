@@ -3,6 +3,8 @@
 関連 Issue: [#2087](https://github.com/nijuniinc/bokudeli-event/issues/2087)
 移行の背景・レガシー資産の棚卸し: [24_managerパッケージの移行.md](../07_リファクタリング/24_managerパッケージの移行.md)
 
+> フェーズ5（レガシー `manager/` の削除）は [#2482](https://github.com/nijuniinc/bokudeli-event-new/issues/2482) で完了した。運営画面の正本は `support/`。
+
 ## 課題と概要
 
 - manager 画面が Vue 2 で実装されており、レガシーすぎて現在は使うことができない。
@@ -22,7 +24,7 @@
 | フェーズ2 | 店舗管理機能（店舗設定・メニュー設定・承認設定の代行）|
 | フェーズ3 | 請求書払い管理 |
 | フェーズ4 | 店舗明細一覧の管理（bokudeli-event-payment 相当）|
-| フェーズ5 | レガシー `manager/` の削除 |
+| フェーズ5 | レガシー `manager/` の削除（[#2482](https://github.com/nijuniinc/bokudeli-event-new/issues/2482) で完了） |
 
 ---
 
