@@ -16,7 +16,8 @@ export const STORAGE_RETENTION: Record<BackupTier, number> = {
   monthly: 6,
 }
 
-export const FIRESTORE_EXPORT_METADATA_FILE = 'overall_export_metadata'
+/** Firestore export のメタデータは `<フォルダ>/<フォルダ名>.overall_export_metadata` に出力される */
+export const FIRESTORE_EXPORT_METADATA_SUFFIX = 'overall_export_metadata'
 
 export const STORAGE_BACKUP_INPROGRESS_DIR = '_inprogress'
 

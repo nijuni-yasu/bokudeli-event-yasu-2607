@@ -10,11 +10,12 @@ const BACKUP_SCHEDULE_OPTIONS = {
   timeoutSeconds: 1800,
 }
 
+// 溜まった過去分の削除に時間がかかるため、バックアップ本体と同じ上限にする（#2486）
 const RETENTION_SCHEDULE_OPTIONS = {
   region: 'asia-northeast1' as const,
   timeZone: 'Asia/Tokyo',
   memory: '512MiB' as const,
-  timeoutSeconds: 540,
+  timeoutSeconds: 1800,
 }
 
 export const firestoreExportDaily = onSchedule({ ...BACKUP_SCHEDULE_OPTIONS, schedule: '0 2 * * *' }, async () => {

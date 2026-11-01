@@ -10,6 +10,9 @@ import {
   STORAGE_RETENTION,
 } from './constants.js'
 import {
+  buildFirestoreExportMetadataPath,
+  collectPrefixesFromPages,
+  getNextPageToken,
   isIncompleteStorageBackupRun,
   isStorageBackupEligibleForRetention,
   parseFirestoreExportFolderSortKey,
@@ -63,6 +66,49 @@ describe('backup retention', () => {
     expect(isStorageBackupEligibleForRetention(false, false, true)).toBe(true)
     expect(isIncompleteStorageBackupRun(false, true)).toBe(true)
     expect(isIncompleteStorageBackupRun(true, true)).toBe(false)
+  })
+})
+
+describe('backup retention listing', () => {
+  it('buildFirestoreExportMetadataPath uses <folder>/<folder>.overall_export_metadata', () => {
+    expect(buildFirestoreExportMetadataPath('daily/2026-11-02T02:00:08.874/')).toBe(
+      'daily/2026-11-02T02:00:08.874/2026-11-02T02:00:08.874.overall_export_metadata',
+    )
+    expect(buildFirestoreExportMetadataPath('2026-08-14T17:00:08_1474/')).toBe(
+      '2026-08-14T17:00:08_1474/2026-08-14T17:00:08_1474.overall_export_metadata',
+    )
+    expect(buildFirestoreExportMetadataPath('weekly/2026-11-01T02:30:00.000')).toBe(
+      'weekly/2026-11-01T02:30:00.000/2026-11-01T02:30:00.000.overall_export_metadata',
+    )
+  })
+
+  it('getNextPageToken reads nextPageToken from the API response only', () => {
+    expect(getNextPageToken({ prefixes: [], nextPageToken: 'token-1' })).toBe('token-1')
+    expect(getNextPageToken({ prefixes: [] })).toBeNull()
+    expect(getNextPageToken({ nextPageToken: '' })).toBeNull()
+    expect(getNextPageToken(null)).toBeNull()
+  })
+
+  it('collectPrefixesFromPages follows pages and stops when nextPageToken is absent', async () => {
+    const pages: Record<string, unknown> = {
+      first: { prefixes: ['daily/a/', 'daily/b/'], nextPageToken: 'token-2' },
+      'token-2': { prefixes: ['daily/c/'] },
+    }
+    const requestedTokens: (string | null)[] = []
+
+    const prefixes = await collectPrefixesFromPages(async (pageToken) => {
+      requestedTokens.push(pageToken)
+      return pages[pageToken ?? 'first']
+    })
+
+    expect(prefixes).toEqual(['daily/a/', 'daily/b/', 'daily/c/'])
+    expect(requestedTokens).toEqual([null, 'token-2'])
+  })
+
+  it('collectPrefixesFromPages throws instead of looping on a repeated pageToken', async () => {
+    await expect(
+      collectPrefixesFromPages(async () => ({ prefixes: ['daily/a/'], nextPageToken: 'same-token' })),
+    ).rejects.toThrow('same pageToken twice')
   })
 })
 
