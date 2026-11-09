@@ -61,6 +61,7 @@ import {
 } from '@shokujii/base/composable/cartMonthlyUsage.js'
 import type { ResolveFormAnswerPathFn, ResolveOrdersPathFn } from '@shokujii/base/types/profilePathResolvers.js'
 import { reportClientError } from '@shokujii/base/utils/reportClientError.js'
+import { reportFormFlowError } from '@shokujii/base/utils/reportFormFlowError.js'
 import {
   loadMenuLimitRemainingMap,
   type MenuLimitRemainingInfo,
@@ -477,7 +478,8 @@ const loadFormPresence = async (event: BokudeliEvent, force = false) => {
       ...formPresenceByKey.value,
       [key]: response.data.has_form ? 'yes' : 'no',
     }
-  } catch {
+  } catch (error) {
+    reportFormFlowError(error, { component: 'cart', stage: 'form_presence', target: event })
     formPresenceByKey.value = { ...formPresenceByKey.value, [key]: 'error' }
   }
 }
@@ -535,6 +537,7 @@ const onPrimaryCartButton = async (item: EnrichedCartItem) => {
       }
     } catch (error) {
       console.error('Failed to check cart before form:', error)
+      reportFormFlowError(error, { component: 'cart', stage: 'cart_gate', target: item.event })
       alertBody.value = $t('cart.order_failed')
       return
     }

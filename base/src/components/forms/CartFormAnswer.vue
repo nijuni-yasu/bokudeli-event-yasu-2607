@@ -32,6 +32,7 @@ import {
 } from '@shokujii/common/utils/validateFormAnswers.js'
 import type { FormField } from '@shokujii/common/schemas/formFields.js'
 import type { GetOrderFormForCartResponse } from '@shokujii/common/apis/form.js'
+import { reportFormFlowError, type FormFlowStage } from '@shokujii/base/utils/reportFormFlowError.js'
 
 const props = defineProps<{
   eventId: string
@@ -67,6 +68,37 @@ const targetUserParameter = ref('')
 const showAlert = (message: string) => {
   alertMessage.value = message
   isOpenAlert.value = true
+}
+
+const getOrderErrorMessage = (error: unknown): string | null => {
+  if (error instanceof FirebaseError && error.code === 'functions/failed-precondition') {
+    return getUserFacingFailedPreconditionMessage(error.message)
+  }
+  if (error instanceof Error) {
+    return getUserFacingFailedPreconditionMessage(error.message)
+  }
+  return null
+}
+
+type StageTarget = { event: { community_id: string; event_id: string } } | undefined
+
+const reportStageError = (stage: FormFlowStage, error: unknown, item: StageTarget) => {
+  // 売り切れ等、理由を画面に出せる想定内の失敗は記録しない（サーバー側で ERROR に分類され、調査の妨げになる）
+  if (getOrderErrorMessage(error) != null) return
+  reportFormFlowError(error, { component: 'CartFormAnswer', stage, target: item?.event })
+}
+
+// 注文確定後は in_cart の購読から対象が消えるため、その消失を失敗として記録しない
+let orderConfirmed = false
+
+/** 失敗を段階付きで記録し、呼び出し元の既存の catch にそのまま渡す */
+const runStage = async <T,>(stage: FormFlowStage, item: StageTarget, run: () => Promise<T>): Promise<T> => {
+  try {
+    return await run()
+  } catch (error) {
+    reportStageError(stage, error, item)
+    throw error
+  }
 }
 
 const cartItem = computed(() =>
@@ -116,15 +148,21 @@ const loadOrderForm = async (isCancelled: () => boolean, preserveAlert = false) 
   const item = cartItem.value
   if (item == null) {
     loading.value = false
+    // カート読み込み中（cart が null）と、注文処理中・確定後の消失は記録しない
+    if (cart.value != null && !saving.value && !orderConfirmed) {
+      reportStageError('form_load', new Error('cart item not found'), undefined)
+    }
     showAlert($t('cart.form_load_failed'))
     return
   }
   loading.value = true
   try {
-    const response = await getOrderFormForCart({
-      community_id: item.event.community_id,
-      event_id: item.event.event_id,
-    })
+    const response = await runStage('form_load', item, () =>
+      getOrderFormForCart({
+        community_id: item.event.community_id,
+        event_id: item.event.event_id,
+      }),
+    )
     if (isCancelled()) return
     form.value = response.data
     answers.value = (response.data.initial_answers ?? []).map((answer) => compactFormAnswerInput(answer))
@@ -138,8 +176,9 @@ const loadOrderForm = async (isCancelled: () => boolean, preserveAlert = false) 
   }
 }
 
+// カートの読み込み完了も監視し、読み込み後に対象が無いときも検出する
 watch(
-  cartItemKey,
+  [cartItemKey, () => cart.value != null],
   async (_key, _previousKey, onCleanup) => {
     let cancelled = false
     onCleanup(() => {
@@ -150,16 +189,6 @@ watch(
   { immediate: true },
 )
 
-const getOrderErrorMessage = (error: unknown): string | null => {
-  if (error instanceof FirebaseError && error.code === 'functions/failed-precondition') {
-    return getUserFacingFailedPreconditionMessage(error.message)
-  }
-  if (error instanceof Error) {
-    return getUserFacingFailedPreconditionMessage(error.message)
-  }
-  return null
-}
-
 const persistAttempt = async (): Promise<string | null> => {
   const key = cartItemKey.value
   const item = cartItem.value
@@ -167,12 +196,15 @@ const persistAttempt = async (): Promise<string | null> => {
   if (item == null || current?.definition_version == null) {
     return null
   }
-  const response = await saveOrderFormAttempt({
-    community_id: item.event.community_id,
-    event_id: item.event.event_id,
-    definition_version: current.definition_version,
-    answers: answers.value.map((answer) => compactFormAnswerInput(answer)),
-  })
+  const definitionVersion = current.definition_version
+  const response = await runStage('save_attempt', item, () =>
+    saveOrderFormAttempt({
+      community_id: item.event.community_id,
+      event_id: item.event.event_id,
+      definition_version: definitionVersion,
+      answers: answers.value.map((answer) => compactFormAnswerInput(answer)),
+    }),
+  )
   if (cartItemKey.value !== key) return null
   if (response.data.issues != null && response.data.issues.length > 0) {
     const stale = response.data.issues.some((issue) => issue.code === 'version_mismatch')
@@ -200,7 +232,7 @@ const ensureOrderAllowed = async (): Promise<boolean> => {
     showAlert($t('cart.form_load_failed'))
     return false
   }
-  const block = await findCartOrderBlock(item)
+  const block = await runStage('order_gate', item, () => findCartOrderBlock(item))
   if (block != null) {
     showAlert($t(CART_BLOCK_MESSAGE_KEY[block]))
     return false
@@ -219,14 +251,16 @@ const startOrder = async (attemptId: string) => {
   const orderIds = sortOrderIdsForEnterpriseSubsidyReplay(item.orders)
   if (needsStripe.value) {
     try {
-      const response = await createStripeCheckoutSession({
-        community_id: item.event.community_id,
-        event_id: item.event.event_id,
-        order_ids: orderIds,
-        isPosted: false,
-        origin: window.location.origin,
-        form_attempt_id: attemptId,
-      })
+      const response = await runStage('stripe_checkout', item, () =>
+        createStripeCheckoutSession({
+          community_id: item.event.community_id,
+          event_id: item.event.event_id,
+          order_ids: orderIds,
+          isPosted: false,
+          origin: window.location.origin,
+          form_attempt_id: attemptId,
+        }),
+      )
       window.location.href =
         response.data.url ?? props.resolveEventPath(item.event.community_account, item.event.event_id)
     } catch (error) {
@@ -236,12 +270,15 @@ const startOrder = async (attemptId: string) => {
   }
   try {
     const eventStore = createAppEventStore(item.event.event_id)
-    await eventStore.confirmOrder({
-      community_id: item.event.community_id,
-      event_id: item.event.event_id,
-      order_ids: orderIds,
-      form_attempt_id: attemptId,
-    })
+    await runStage('confirm_order', item, () =>
+      eventStore.confirmOrder({
+        community_id: item.event.community_id,
+        event_id: item.event.event_id,
+        order_ids: orderIds,
+        form_attempt_id: attemptId,
+      }),
+    )
+    orderConfirmed = true
   } catch (error) {
     showAlert(getOrderErrorMessage(error) ?? $t('cart.order_failed'))
     return
@@ -268,6 +305,7 @@ const onPrimary = async () => {
     if (cartItemKey.value !== key) return
     if (attemptId == null) {
       if (issues.value.length === 0 && !isOpenAlert.value) {
+        reportStageError('save_attempt', new Error('form attempt not created'), cartItem.value)
         showAlert($t('cart.form_save_failed'))
       }
       return
