@@ -273,6 +273,13 @@ service cloud.firestore {
                         || isSameEnterprise(request.resource.data)
                     );
             }
+            // コミュニティ本体の read 条件と同じ（企業テナントのフォームを他テナントへ出さない）
+            function canReadParentCommunity() {
+                let communityData = get(/databases/$(database)/documents/communities/$(community)).data;
+                return docEnterpriseId(communityData) == null
+                    || isSameEnterprise(communityData)
+                    || isSupport();
+            }
             function communityEnterpriseIdUnchanged() {
                 return docEnterpriseId(request.resource.data) == docEnterpriseId(resource.data);
             }
@@ -340,19 +347,28 @@ service cloud.firestore {
                 match /menus/{menuId} {
                     allow read: if true
                 }
+                // フォーム設定（どのフォームを使うか）は、コミュニティを読める人なら誰でも読める（#2492）。書き込みは Functions のみ
                 match /form_configs/{docId} {
-                    allow read, write: if false;
+                    allow read: if canReadParentCommunity();
+                    allow write: if false;
                 }
+                // 確定回答は本人・コミュマネ・サポートのみ read。書き込みは Functions のみ
+                // コミュマネ経路にもコミュニティ本体と同じテナント境界をかける（企業テナント外の manager に読ませない）
                 match /form_responses/{userId} {
-                    allow read, write: if false;
+                    allow read: if (request.auth != null && request.auth.uid == userId)
+                                || isSupport()
+                                || (isManager() && canReadParentCommunity());
+                    allow write: if false;
                 }
+                // 回答の下書き（注文確定前の試行）は本人のみ read。書き込みは Functions のみ
                 match /form_checkout_attempts/{attemptId} {
-                    allow read, write: if false;
+                    allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+                    allow write: if false;
                 }
             }
             match /forms/{formId} {
-                // 定義の閲覧はコミュマネまたはサポート。作成・更新・複製・アーカイブは Functions のみ
-                allow read: if isManager() || isSupport();
+                // 設問はコミュニティを読める人なら誰でも読める（#2492）。作成・更新・複製・アーカイブは Functions のみ
+                allow read: if canReadParentCommunity();
                 allow write: if false;
             }
             match /members/{memberId} {

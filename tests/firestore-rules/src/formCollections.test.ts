@@ -16,6 +16,7 @@ const testDir = fileURLToPath(new URL('.', import.meta.url))
 const SUPPORT_USER = 'support-user'
 const MANAGER = 'manager-user'
 const MEMBER = 'member-user'
+const OTHER_MEMBER = 'other-member-user'
 const COMMUNITY_ID = 'community-1'
 const EVENT_ID = 'event-1'
 
@@ -55,7 +56,7 @@ function formResponseRef(context: RulesTestContext) {
     .doc(MEMBER)
 }
 
-function formAttemptRef(context: RulesTestContext) {
+function attemptsCollection(context: RulesTestContext) {
   return context
     .firestore()
     .collection('communities')
@@ -63,7 +64,10 @@ function formAttemptRef(context: RulesTestContext) {
     .collection('events')
     .doc(EVENT_ID)
     .collection('form_checkout_attempts')
-    .doc('attempt-1')
+}
+
+function formAttemptRef(context: RulesTestContext) {
+  return attemptsCollection(context).doc('attempt-1')
 }
 
 describe('form collections firestore rules', () => {
@@ -125,39 +129,87 @@ describe('form collections firestore rules', () => {
   it.each([
     ['未認証', () => unauthenticated()],
     ['一般ユーザー', () => auth(MEMBER)],
-  ])('%sは forms を read/write できない', async (_label, ctx) => {
+    ['コミュマネ', () => auth(MANAGER)],
+    ['サポート', () => auth(SUPPORT_USER)],
+  ])('%sは forms と form_configs を読めるが書けない', async (_label, ctx) => {
     const context = ctx()
-    await assertFails(formRef(context).get())
+    await assertSucceeds(formRef(context).get())
+    await assertSucceeds(context.firestore().collection('communities').doc(COMMUNITY_ID).collection('forms').get())
+    await assertSucceeds(formConfigRef(context).get())
     await assertFails(formRef(context).set({ name: '更新' }))
+    await assertFails(formConfigRef(context).set({ definition_version: 2 }))
+  })
+
+  it('企業テナントのコミュニティの forms / form_configs は、テナント外の一般ユーザーから読めない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection('communities').doc(COMMUNITY_ID).update({ enterprise_id: 'enterprise-1' })
+    })
+    await assertFails(formRef(auth(MEMBER)).get())
+    await assertFails(formConfigRef(auth(MEMBER)).get())
+    await assertFails(formRef(unauthenticated()).get())
+    await assertSucceeds(formRef(auth(SUPPORT_USER)).get())
+  })
+
+  it('企業テナントのコミュニティでは、テナント外のユーザーが manager 文書を持っていても form_responses を読めない', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().collection('communities').doc(COMMUNITY_ID).update({ enterprise_id: 'enterprise-1' })
+    })
+    await assertFails(formResponseRef(auth(MANAGER)).get())
+    await assertSucceeds(formResponseRef(auth(MEMBER)).get())
+    await assertSucceeds(formResponseRef(auth(SUPPORT_USER)).get())
+  })
+
+  it.each([
+    ['本人', () => auth(MEMBER)],
+    ['コミュマネ', () => auth(MANAGER)],
+    ['サポート', () => auth(SUPPORT_USER)],
+  ])('%sは form_responses を読めるが書けない', async (_label, ctx) => {
+    const context = ctx()
+    await assertSucceeds(formResponseRef(context).get())
+    await assertFails(formResponseRef(context).set({ answers: [] }))
+  })
+
+  it('コミュマネは form_responses を一覧で読める', async () => {
+    const responses = auth(MANAGER)
+      .firestore()
+      .collection('communities')
+      .doc(COMMUNITY_ID)
+      .collection('events')
+      .doc(EVENT_ID)
+      .collection('form_responses')
+    await assertSucceeds(responses.get())
   })
 
   it.each([
     ['未認証', () => unauthenticated()],
-    ['一般ユーザー', () => auth(MEMBER)],
-    ['コミュマネ', () => auth(MANAGER)],
-    ['サポート', () => auth(SUPPORT_USER)],
-  ])('%sは form_configs / form_responses / form_checkout_attempts を read/write できない', async (_label, ctx) => {
-    const context = ctx()
-    await assertFails(formConfigRef(context).get())
-    await assertFails(formConfigRef(context).set({ definition_version: 2 }))
-    await assertFails(formResponseRef(context).get())
-    await assertFails(formResponseRef(context).set({ answers: [] }))
-    await assertFails(formAttemptRef(context).get())
+    ['他の一般ユーザー', () => auth(OTHER_MEMBER)],
+  ])('%sは form_responses を読めない', async (_label, ctx) => {
+    await assertFails(formResponseRef(ctx()).get())
+  })
+
+  it('本人は自分の form_checkout_attempts だけを読める（書けない）', async () => {
+    const context = auth(MEMBER)
+    await assertSucceeds(formAttemptRef(context).get())
+    await assertSucceeds(attemptsCollection(context).where('user_id', '==', MEMBER).get())
     await assertFails(formAttemptRef(context).set({ status: 'frozen' }))
   })
 
   it.each([
+    ['未認証', () => unauthenticated()],
+    ['他の一般ユーザー', () => auth(OTHER_MEMBER)],
     ['コミュマネ', () => auth(MANAGER)],
     ['サポート', () => auth(SUPPORT_USER)],
-  ])('%sは forms を読めるが書けない', async (_label, ctx) => {
+  ])('%sは他人の form_checkout_attempts を読めない', async (_label, ctx) => {
     const context = ctx()
-    await assertSucceeds(formRef(context).get())
-    await assertSucceeds(context.firestore().collection('communities').doc(COMMUNITY_ID).collection('forms').get())
-    await assertFails(formRef(context).set({ name: '更新' }))
+    await assertFails(formAttemptRef(context).get())
+    await assertFails(attemptsCollection(context).get())
   })
 
-  it('collection group からも form_responses と forms を読めない', async () => {
+  it('collection group からは form_responses / form_checkout_attempts / forms を読めない', async () => {
     await assertFails(auth(MANAGER).firestore().collectionGroup('form_responses').get())
+    await assertFails(
+      auth(MEMBER).firestore().collectionGroup('form_checkout_attempts').where('user_id', '==', MEMBER).get(),
+    )
     await assertFails(auth(SUPPORT_USER).firestore().collectionGroup('forms').get())
     await assertFails(auth(MANAGER).firestore().collectionGroup('forms').get())
   })
