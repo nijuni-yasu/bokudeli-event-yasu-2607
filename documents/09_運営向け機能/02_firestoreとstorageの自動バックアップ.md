@@ -10,7 +10,7 @@ Shokujii の本番データ（Firestore / Firebase Storage）について、次�
 - **中長期の復元ポイント**を一定数残す（ウォーム / コールド層）
 - **Storage はフルコピーのため容量コストが大きい**ため、Firestore より保持本数・期間を短く設定する
 
-本ドキュメントでは採用方針として **推奨案 A（バランス型）** を定義する。実装は段階的に進め、各環境（本番 / sandbox 等）で同一ポリシーを適用する。
+本ドキュメントでは採用方針として **推奨案 A（バランス型）** を定義する。実装は段階的に進め、本番と development で同一ポリシーを適用する（sandbox は対象外。§1.3）。
 
 ### 1.2 採用方針: 推奨案 A（バランス型）
 
@@ -29,7 +29,7 @@ Firestore と Storage で **保持 tier を分ける段階保持（GFS 的）** 
 |:--|:--|
 | **対象データ** | Firestore `(default)` データベース、Firebase Storage **既定バケット**内オブジェクト（**全オブジェクト**） |
 | **対象外** | `{PROJECT}-invoice` 等の **別 GCS バケット**（請求書 PDF 用。バックアップ対象に含めない） |
-| **対象プロジェクト** | 本番 Firebase プロジェクト（sandbox / 検証環境は必要に応じ同ポリシーまたは短縮版） |
+| **対象プロジェクト** | 本番・development の Firebase プロジェクト。sandbox（`bokudeli-event-yasu-*`）にはバックアップ系 Function をデプロイしない（#2487） |
 | **実施主体** | 運営（設定・監視）、エンジニア（Functions / Terraform 実装・復旧作業） |
 
 ### 1.4 関連ドキュメント
@@ -264,6 +264,7 @@ GCS lifecycle だけでは「tier ごとに本数を固定」しにくいため�
 | `functions/default/src/backup/storageCopy.ts` | 既定バケット → storage-backups へコピー |
 | `functions/default/src/backup/retention.ts` | tier 別保持削除・legacy 直下 export 削除 |
 | `functions/default/src/backup/scheduled.ts` | 7 本の Scheduled Function |
+| `functions/default/src/backup/deployTarget.ts` | sandbox ではバックアップ系 7 本を export しない判定（`index.ts` から利用） |
 | `terraform/storage.tf` | バックアップ用 GCS + IAM |
 | `terraform/firebase.tf` | PITR 有効化 |
 
@@ -271,7 +272,7 @@ GCS lifecycle だけでは「tier ごとに本数を固定」しにくいため�
 
 | 変数 | 用途 |
 |:--|:--|
-| `GCLOUD_PROJECT` | 自動設定。バケット名の組み立てに使用 |
+| `GCLOUD_PROJECT` | 自動設定。バケット名の組み立てと、デプロイ時の sandbox 判定（`bokudeli-event-yasu-` で始まればバックアップ系を export しない）に使用 |
 | `BACKUP_RETENTION_DRY_RUN=true` | 初回デプロイ時。削除せずログのみ（**検証後に削除または false**） |
 
 ### 5.3 実装タスク（Phase 1: MVP）
