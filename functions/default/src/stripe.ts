@@ -35,6 +35,7 @@ import { formatOrderMenuDisplayName } from '@shokujii/common/utils/menuOption.js
 import { assertMenuLimitsForConfirm } from './utils/menuLimitValidation.js'
 import { assertStripeCheckoutLineItemLimit, formatStripeProductName } from './utils/stripeCheckoutLineItems.js'
 import { planFormConfirmation } from './utils/formConfirm.js'
+import { parseOptionalFormSubmission } from './utils/formAccess.js'
 import { getFormCheckoutAttempt, saveFormCheckoutAttempt } from './stores/form.js'
 
 const logger = createModuleLogger('stripe')
@@ -63,6 +64,7 @@ export const createStripeCheckoutSession = onCall<
     if (new Set(order_ids).size !== order_ids.length) {
       throw new HttpsError('invalid-argument', 'order_ids に重複があります')
     }
+    const formSubmission = parseOptionalFormSubmission(request.data.form_submission)
 
     const uid = request.auth.uid
 
@@ -215,6 +217,7 @@ export const createStripeCheckoutSession = onCall<
           event,
           userId: uid,
           attemptId: form_attempt_id,
+          submission: formSubmission,
           transaction,
         })
         if (formPlan.kind === 'apply') {

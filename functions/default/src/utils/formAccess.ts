@@ -4,7 +4,12 @@ import { isEventFormEditableStatus, omitHiddenFormFields } from '@shokujii/commo
 import type { CommunityForm } from '@shokujii/common/schemas/CommunityForm.js'
 import type { EventFormConfig } from '@shokujii/common/schemas/EventFormConfig.js'
 import type { FormField } from '@shokujii/common/schemas/formFields.js'
-import type { CommunityFormDetail, EventFormConfigDto } from '@shokujii/common/apis/form.js'
+import {
+  OrderFormSubmissionSchema,
+  type CommunityFormDetail,
+  type EventFormConfigDto,
+  type OrderFormSubmission,
+} from '@shokujii/common/apis/form.js'
 import { getCommunity } from '../stores/community.js'
 import { getConfigGlobal } from '../stores/config.js'
 import { getEventInCommunity } from '../stores/event.js'
@@ -19,6 +24,14 @@ export function parseOrThrow<T>(schema: { parse: (value: unknown) => T }, data: 
   } catch {
     throw new HttpsError('invalid-argument', '必須パラメータが不足しています')
   }
+}
+
+/** 注文確定リクエストの form_submission を検証する。未指定なら undefined */
+export function parseOptionalFormSubmission(value: unknown): OrderFormSubmission | undefined {
+  if (value == null) {
+    return undefined
+  }
+  return parseOrThrow(OrderFormSubmissionSchema, value)
 }
 
 export async function requireAuthUid(uid: string | undefined): Promise<string> {

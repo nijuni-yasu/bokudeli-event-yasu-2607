@@ -30,7 +30,8 @@ import {
   type SetEventFormFromCommunityResponse,
   type UpdateCommunityFormResponse,
 } from '@shokujii/common/apis/form.js'
-import { formatFormAnswerDisplay } from '@shokujii/common/utils/validateFormAnswers.js'
+import { buildEventFormResponseRows } from '@shokujii/common/utils/orderFormAnswers.js'
+import { toCommunityFormSummary } from '@shokujii/common/utils/communityFormSummary.js'
 import { nextCommunityFormDefinitionVersion } from '@shokujii/common/utils/communityFormDefinition.js'
 import { normalizeFormFields } from '@shokujii/common/utils/normalizeFormFields.js'
 import { createModuleLogger } from './utils/logger.js'
@@ -76,17 +77,7 @@ export const listCommunityFormsCallable = onCall(async (request): Promise<ListCo
   await requireCommunityManager(community_id, uid)
   const forms = await listCommunityForms(community_id)
   return {
-    forms: forms
-      .sort((a, b) => b.updated_at - a.updated_at)
-      .map((form) => ({
-        form_id: form.id,
-        name: form.name,
-        description: form.description,
-        purpose: form.purpose,
-        archived: form.archived,
-        field_count: omitHiddenFormFields(form.fields).length,
-        updated_at: form.updated_at,
-      })),
+    forms: forms.sort((a, b) => b.updated_at - a.updated_at).map((form) => toCommunityFormSummary(form)),
   }
 })
 
@@ -280,51 +271,18 @@ export const clearEventFormConfig = onCall(async (request): Promise<ClearEventFo
   return { cleared: true }
 })
 
-function toResponseItem(
-  userId: string,
-  displayName: string,
-  participation: 'confirmed' | 'canceled',
-  answeredAt: number,
-  updatedAt: number,
-  answers: EventFormResponseListItem['answers'],
-): EventFormResponseListItem {
-  return {
-    user_id: userId,
-    display_name: displayName,
-    participation,
-    answered_at: answeredAt,
-    updated_at: updatedAt,
-    answers,
-  }
-}
-
 async function buildResponseItems(communityId: string, eventId: string): Promise<EventFormResponseListItem[]> {
   const [responses, ordered, canceled] = await Promise.all([
     listFormResponses(communityId, eventId),
     getOrders(communityId, eventId, 'ordered'),
     getOrders(communityId, eventId, 'canceled'),
   ])
-  const orderedUsers = new Set(ordered.map((order) => order.user_id))
-  const canceledUsers = new Set(canceled.map((order) => order.user_id))
   const usersById = await getUsersByUserIds(responses.map((response) => response.user_id))
-  return responses
-    .map((response) => {
-      const participation = orderedUsers.has(response.user_id) ? 'confirmed' : 'canceled'
-      const user = usersById.get(response.user_id)
-      return toResponseItem(
-        response.user_id,
-        user?.user_name ?? response.user_id,
-        participation,
-        response.answered_at,
-        response.updated_at,
-        response.answers.map((answer) => ({
-          field_id: answer.field_id,
-          field_label: answer.field_label,
-          display_value: formatFormAnswerDisplay(answer),
-        })),
-      )
-    })
-    .filter((item) => orderedUsers.has(item.user_id) || canceledUsers.has(item.user_id))
+  return buildEventFormResponseRows({
+    responses,
+    orders: [...ordered, ...canceled],
+    displayNameOf: (userId) => usersById.get(userId)?.user_name,
+  })
 }
 
 export const listEventFormResponses = onCall(async (request): Promise<ListEventFormResponsesResponse> => {

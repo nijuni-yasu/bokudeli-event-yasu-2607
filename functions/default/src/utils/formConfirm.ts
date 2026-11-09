@@ -1,35 +1,29 @@
 import { HttpsError } from 'firebase-functions/https'
 import type { Transaction } from 'firebase-admin/firestore'
 import { FormResponse } from '@shokujii/common/schemas/FormResponse.js'
-import type { FormCheckoutAttempt } from '@shokujii/common/schemas/FormCheckoutAttempt.js'
+import { FormCheckoutAttempt } from '@shokujii/common/schemas/FormCheckoutAttempt.js'
 import type { CommunityForm } from '@shokujii/common/schemas/CommunityForm.js'
 import type { FormField } from '@shokujii/common/schemas/formFields.js'
 import type { FormAnswerSnapshot } from '@shokujii/common/schemas/FormResponse.js'
-import { getFormCheckoutAttempt, getFormResponse, saveFormCheckoutAttempt, saveFormResponse } from '../stores/form.js'
+import { omitHiddenFormFields } from '@shokujii/common/schemas/formFields.js'
+import { ORDER_FORM_INVALID_MESSAGE, type OrderFormSubmission } from '@shokujii/common/apis/form.js'
+import { validateFormAnswers } from '@shokujii/common/utils/validateFormAnswers.js'
+import { isAttemptForCurrentForm, isConfirmedResponseForCurrentForm } from '@shokujii/common/utils/orderFormAnswers.js'
+import {
+  getFormCheckoutAttempt,
+  getFormResponse,
+  newFormCheckoutAttemptId,
+  saveFormCheckoutAttempt,
+  saveFormResponse,
+} from '../stores/form.js'
 import { loadEventFormReferenceIfPf } from './formAccess.js'
 import type { ShokujiiEvent } from '../stores/event.js'
 
-export function isAttemptForCurrentForm(attempt: FormCheckoutAttempt, form: CommunityForm): boolean {
-  if (attempt.source_form_id === '') {
-    return false
-  }
-  return attempt.source_form_id === form.id && attempt.definition_version === form.definition_version
-}
-
-export function isConfirmedResponseForCurrentForm(response: FormResponse, form: CommunityForm): boolean {
-  if (response.source_form_id === '') {
-    return false
-  }
-  return response.source_form_id === form.id && response.definition_version === form.definition_version
-}
-
-/** 初期表示用。版が上がっていても、同じフォームの過去回答を残っている設問へ載せる。 */
-export function isConfirmedResponseForSameForm(response: FormResponse, form: CommunityForm): boolean {
-  if (response.source_form_id === '') {
-    return false
-  }
-  return response.source_form_id === form.id
-}
+export {
+  isAttemptForCurrentForm,
+  isConfirmedResponseForCurrentForm,
+  isConfirmedResponseForSameForm,
+} from '@shokujii/common/utils/orderFormAnswers.js'
 
 export async function requireAttemptForLatestForm(params: {
   event: ShokujiiEvent
@@ -64,10 +58,18 @@ export type FormConfirmPlan =
   | { kind: 'reuse'; existing: FormResponse }
   | { kind: 'apply'; attempt: FormCheckoutAttempt; existing?: FormResponse }
 
+/**
+ * 注文確定時のフォーム処理を決める。
+ * - submission がある: 最新のフォームで検証し、試行をメモリ上で組み立てる（保存は呼び出し元）
+ * - attemptId がある: 旧クライアントが saveOrderFormAttempt で保存した試行を使う
+ * - どちらも無い: 今の版の確定回答があれば再利用する
+ * 読み取りだけを行う。トランザクション内の他の読み取りより後、書き込みより前に呼ぶ。
+ */
 export async function planFormConfirmation(params: {
   event: ShokujiiEvent
   userId: string
   attemptId: string | undefined
+  submission?: OrderFormSubmission
   transaction: Transaction
 }): Promise<FormConfirmPlan> {
   const reference = await loadEventFormReferenceIfPf(params.event, params.transaction)
@@ -75,6 +77,16 @@ export async function planFormConfirmation(params: {
     return { kind: 'none' }
   }
   const existing = await getFormResponse(params.event.community_id, params.event.id, params.userId, params.transaction)
+  if (params.submission != null) {
+    const attempt = buildAttemptFromSubmission({
+      event: params.event,
+      userId: params.userId,
+      form: reference.form,
+      submission: params.submission,
+      existing,
+    })
+    return { kind: 'apply', attempt, existing }
+  }
   if (params.attemptId != null && params.attemptId !== '') {
     const attempt = await requireAttemptForLatestForm({
       event: params.event,
@@ -89,6 +101,41 @@ export async function planFormConfirmation(params: {
     return { kind: 'reuse', existing }
   }
   throw new HttpsError('failed-precondition', 'フォームの回答が必要です')
+}
+
+/** 回答を検証し、未保存の試行を作る。不備があれば details.form_issues 付きの failed-precondition を投げる */
+export function buildAttemptFromSubmission(params: {
+  event: ShokujiiEvent
+  userId: string
+  form: CommunityForm
+  submission: OrderFormSubmission
+  existing: FormResponse | undefined
+}): FormCheckoutAttempt {
+  // 表示後に別フォーム（複製で版番号が同じものを含む）へ差し替えられたら、版違いと同じく再読み込みさせる
+  if (params.submission.source_form_id !== params.form.id) {
+    throw new HttpsError('failed-precondition', ORDER_FORM_INVALID_MESSAGE, {
+      form_issues: [{ code: 'version_mismatch' }],
+    })
+  }
+  const fields = omitHiddenFormFields(params.form.fields)
+  const validated = validateFormAnswers({
+    fields,
+    answers: params.submission.answers,
+    definitionVersion: params.form.definition_version,
+    expectedDefinitionVersion: params.submission.definition_version,
+  })
+  if (!validated.ok) {
+    throw new HttpsError('failed-precondition', ORDER_FORM_INVALID_MESSAGE, { form_issues: validated.issues })
+  }
+  return new FormCheckoutAttempt(newFormCheckoutAttemptId(params.event.community_id, params.event.id), {
+    user_id: params.userId,
+    source_form_id: params.form.id,
+    definition_version: params.form.definition_version,
+    revision_basis: params.existing?.revision ?? 0,
+    answers: validated.answers,
+    fields_snapshot: fields,
+    status: 'pending',
+  })
 }
 
 export function mergeAttemptAnswersWithInactiveExisting(

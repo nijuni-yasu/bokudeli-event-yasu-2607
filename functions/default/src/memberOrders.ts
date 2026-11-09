@@ -40,6 +40,7 @@ import { getEventInCommunity } from './stores/event.js'
 import { createModuleLogger } from './utils/logger.js'
 import { applyOrderConfirmedSideEffects } from './orderConfirmedSideEffects.js'
 import { applyAttemptToConfirmedResponse, planFormConfirmation } from './utils/formConfirm.js'
+import { parseOptionalFormSubmission } from './utils/formAccess.js'
 import {
   deleteOrderedNoOrderParticipation,
   findOrderedNoOrderParticipationIdsToDelete,
@@ -338,6 +339,7 @@ export async function confirmOrderHandler(
   if (!community_id || !event_id || !Array.isArray(order_ids) || order_ids.length === 0) {
     throw new HttpsError('invalid-argument', '必須パラメータが不足しています')
   }
+  const formSubmission = parseOptionalFormSubmission(request.data.form_submission)
 
   const enterpriseOrderCreateLog = await db.runTransaction(async (transaction) => {
     const eventData = await getEventInCommunity(community_id, event_id, transaction)
@@ -455,6 +457,7 @@ export async function confirmOrderHandler(
       event: eventData,
       userId: uid,
       attemptId: form_attempt_id,
+      submission: formSubmission,
       transaction,
     })
     if (formPlan.kind === 'apply') {

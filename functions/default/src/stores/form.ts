@@ -203,6 +203,10 @@ export const createFormCheckoutAttempt = async (
   return attempt
 }
 
+/** 保存前の試行に使う文書 ID を払い出す（トランザクションの読み取り前に書き込まないため） */
+export const newFormCheckoutAttemptId = (communityId: string, eventId: string): string =>
+  formAttemptsCollection(communityId, eventId).doc().id
+
 export const getFormCheckoutAttempt = async (
   communityId: string,
   eventId: string,
