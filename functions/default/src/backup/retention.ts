@@ -1,9 +1,9 @@
-import { Storage, type GetFilesOptions } from '@google-cloud/storage'
+import { Storage } from '@google-cloud/storage'
 import { DateTime } from 'luxon'
 import { createModuleLogger } from '../utils/logger.js'
 import {
   BACKUP_TIMEZONE,
-  FIRESTORE_EXPORT_METADATA_FILE,
+  FIRESTORE_EXPORT_METADATA_SUFFIX,
   FIRESTORE_RETENTION,
   STORAGE_BACKUP_INPROGRESS_DIR,
   STORAGE_BACKUP_SUCCESS_MARKER,
@@ -116,25 +116,64 @@ const getPrefixesFromApiResponse = (apiResponse: unknown): string[] => {
   return prefixes.filter((entry): entry is string => typeof entry === 'string')
 }
 
-const listFolderPrefixes = async (bucketName: string, prefix: string): Promise<string[]> => {
-  const storage = new Storage()
-  const bucket = storage.bucket(bucketName)
+export const getNextPageToken = (apiResponse: unknown): string | null => {
+  if (typeof apiResponse !== 'object' || apiResponse == null || !('nextPageToken' in apiResponse)) {
+    return null
+  }
+  const token = apiResponse.nextPageToken
+  return typeof token === 'string' && token !== '' ? token : null
+}
+
+/**
+ * ページを最後まで辿って prefix を集める。
+ * getFiles の nextQuery は autoPaginate: false を落とし、2 ページ目以降で古い pageToken を返し続けるため使わない。
+ * 次ページの有無は API レスポンスの nextPageToken だけで判定する。
+ */
+export const collectPrefixesFromPages = async (
+  fetchPage: (pageToken: string | null) => Promise<unknown>,
+): Promise<string[]> => {
   const collected: string[] = []
-  let query: GetFilesOptions = { prefix, delimiter: '/', autoPaginate: false }
+  const usedPageTokens = new Set<string>()
+  let pageToken: string | null = null
 
   do {
-    const [, nextQuery, apiResponse] = await bucket.getFiles(query)
+    const apiResponse = await fetchPage(pageToken)
     collected.push(...getPrefixesFromApiResponse(apiResponse))
-    query = nextQuery ?? { prefix, delimiter: '/', autoPaginate: false }
-  } while (query.pageToken != null)
+    const nextPageToken = getNextPageToken(apiResponse)
+    if (nextPageToken != null) {
+      if (usedPageTokens.has(nextPageToken)) {
+        throw new Error('GCS list returned an already used pageToken')
+      }
+      usedPageTokens.add(nextPageToken)
+    }
+    pageToken = nextPageToken
+  } while (pageToken != null)
 
   return collected
 }
 
+const listFolderPrefixes = async (bucketName: string, prefix: string): Promise<string[]> => {
+  const bucket = new Storage().bucket(bucketName)
+  return collectPrefixesFromPages(async (pageToken) => {
+    const [, , apiResponse] = await bucket.getFiles({
+      prefix,
+      delimiter: '/',
+      autoPaginate: false,
+      ...(pageToken != null ? { pageToken } : {}),
+    })
+    return apiResponse
+  })
+}
+
+export const buildFirestoreExportMetadataPath = (folderPrefix: string): string => {
+  const normalizedPrefix = folderPrefix.endsWith('/') ? folderPrefix : `${folderPrefix}/`
+  const folderName = normalizedPrefix.replace(/\/$/, '').split('/').pop() ?? ''
+  return `${normalizedPrefix}${folderName}.${FIRESTORE_EXPORT_METADATA_SUFFIX}`
+}
+
 const hasFirestoreExportMetadata = async (bucketName: string, folderPrefix: string): Promise<boolean> => {
   const storage = new Storage()
-  const metadataPath = `${folderPrefix}${FIRESTORE_EXPORT_METADATA_FILE}`
-  const [exists] = await storage.bucket(bucketName).file(metadataPath).exists()
+  const [exists] = await storage.bucket(bucketName).file(buildFirestoreExportMetadataPath(folderPrefix)).exists()
   return exists
 }
 
@@ -252,6 +291,25 @@ const cleanupStorageTier = async (bucketName: string, tier: BackupTier, dryRun: 
   }
 }
 
+export const isNotFoundError = (error: unknown): boolean =>
+  typeof error === 'object' && error != null && 'code' in error && error.code === 404
+
+/**
+ * Bucket.exists() は storage.buckets.get が必要で、実行 SA（objectAdmin / objectViewer）には無い。
+ * 付与済みの storage.objects.list で確かめ、404 のときだけ「バケットなし」とする。
+ */
+const hasStorageBackupBucket = async (bucketName: string): Promise<boolean> => {
+  try {
+    await new Storage().bucket(bucketName).getFiles({ maxResults: 1, autoPaginate: false })
+    return true
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return false
+    }
+    throw error
+  }
+}
+
 export const runBackupRetentionCleanup = async (): Promise<void> => {
   const projectId = getProjectId()
   const dryRun = isRetentionDryRun()
@@ -265,9 +323,17 @@ export const runBackupRetentionCleanup = async (): Promise<void> => {
     now: DateTime.now().setZone(BACKUP_TIMEZONE).toISO(),
   })
 
+  // Storage バックアップ用バケットが無い環境（development 等）でも Firestore 側の削除は続ける
+  const storageBucketExists = await hasStorageBackupBucket(storageBucketName)
+  if (!storageBucketExists) {
+    logger.warn('Storage backup bucket not found; skipping Storage retention', { storageBucketName })
+  }
+
   for (const tier of TIER_PREFIXES) {
     await cleanupFirestoreTier(firestoreBucketName, tier, dryRun)
-    await cleanupStorageTier(storageBucketName, tier, dryRun)
+    if (storageBucketExists) {
+      await cleanupStorageTier(storageBucketName, tier, dryRun)
+    }
   }
 
   await cleanupLegacyFirestoreRootExports(firestoreBucketName, dryRun)
