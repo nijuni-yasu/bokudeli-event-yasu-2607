@@ -1,3 +1,5 @@
+import type { OrderFormSubmission } from './form.js'
+
 export type AddToCartMenuRequest = {
   menu_id: string
   count: number
@@ -22,7 +24,10 @@ export type ConfirmOrderRequest = {
   community_id: string
   event_id: string
   order_ids: string[]
+  /** 旧クライアント用。saveOrderFormAttempt で作った試行 ID */
   form_attempt_id?: string
+  /** フォーム回答。サーバーで検証し、注文確定と同じトランザクションで保存する */
+  form_submission?: OrderFormSubmission
 }
 
 export type ConfirmOrderResponse = {

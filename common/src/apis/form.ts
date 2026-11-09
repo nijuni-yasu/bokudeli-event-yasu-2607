@@ -192,6 +192,42 @@ export type SaveOrderFormAttemptResponse = {
   issues?: FormValidationIssue[]
 }
 
+/** 注文確定（confirmOrder / createStripeCheckoutSession）に一緒に渡すフォーム回答 */
+export const OrderFormSubmissionSchema = z.object({
+  /** 回答画面に表示したフォームの ID。版番号はフォームごとの値のため、差し替えの検知に使う */
+  source_form_id: z.string().min(1),
+  definition_version: z.number().int().positive(),
+  answers: z.array(FormAnswerInputSchema).max(FORM_FIELD_LIMITS.maxFields),
+})
+export type OrderFormSubmission = z.infer<typeof OrderFormSubmissionSchema>
+
+/** 回答の検証に失敗したときの failed-precondition のメッセージ。details に項目ごとの指摘を載せる */
+export const ORDER_FORM_INVALID_MESSAGE = 'フォームの回答に不備があります'
+
+const FORM_VALIDATION_ISSUE_CODES = [
+  'required',
+  'type',
+  'unknown_field',
+  'unknown_option',
+  'too_long',
+  'invalid_email',
+  'invalid_phone',
+  'invalid_date',
+  'version_mismatch',
+] as const satisfies ReadonlyArray<FormValidationIssue['code']>
+
+export const OrderFormInvalidDetailsSchema = z.object({
+  form_issues: z
+    .array(
+      z.object({
+        field_id: z.string().optional(),
+        code: z.enum(FORM_VALIDATION_ISSUE_CODES),
+      }),
+    )
+    .min(1),
+})
+export type OrderFormInvalidDetails = { form_issues: FormValidationIssue[] }
+
 export const EVENT_FORM_RESPONSE_FILTER_VALUES = ['confirmed', 'canceled'] as const
 export type EventFormResponseFilter = (typeof EVENT_FORM_RESPONSE_FILTER_VALUES)[number]
 

@@ -1,3 +1,5 @@
+import type { OrderFormSubmission } from './form.js'
+
 export type CreateStripeCheckoutSessionRequest = {
   community_id: string
   event_id: string
@@ -5,7 +7,10 @@ export type CreateStripeCheckoutSessionRequest = {
   isPosted: boolean
   /** Stripe 完了後のリダイレクト先オリジン（enterprise 等）。Functions 側でテナントホストと照合する */
   origin?: string
+  /** 旧クライアント用。saveOrderFormAttempt で作った試行 ID */
   form_attempt_id?: string
+  /** フォーム回答。サーバーで検証して試行を作り、決済完了時に確定回答へ反映する */
+  form_submission?: OrderFormSubmission
 }
 
 export type CreateStripeCheckoutSessionResponse = {
