@@ -7,6 +7,7 @@ Object.defineProperty(globalThis, 'IS_SERVER', {
 // https://firebase.google.com/docs/functions/typescript
 import { setGlobalOptions } from 'firebase-functions/v2/options'
 import { initializeApp } from 'firebase-admin/app'
+import { shouldDeployBackupFunctions } from './backup/deployTarget.js'
 
 initializeApp()
 setGlobalOptions({ region: 'asia-northeast1' })
@@ -148,5 +149,6 @@ export const {
   import('./enterprise/dashboard.js'),
   import('./enterprise/auditLogs.js'),
   import('./enterprise/billingSnapshots.js'),
-  import('./backup/scheduled.js'),
+  // sandbox ではバックアップ系を export しない（#2487）。デプロイ時の GCLOUD_PROJECT で判定する
+  shouldDeployBackupFunctions(process.env.GCLOUD_PROJECT) ? import('./backup/scheduled.js') : Promise.resolve({}),
 ])))
