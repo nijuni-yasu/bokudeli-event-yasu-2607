@@ -13,6 +13,7 @@ import {
   buildFirestoreExportMetadataPath,
   collectPrefixesFromPages,
   getNextPageToken,
+  isNotFoundError,
   isIncompleteStorageBackupRun,
   isStorageBackupEligibleForRetention,
   parseFirestoreExportFolderSortKey,
@@ -108,7 +109,24 @@ describe('backup retention listing', () => {
   it('collectPrefixesFromPages throws instead of looping on a repeated pageToken', async () => {
     await expect(
       collectPrefixesFromPages(async () => ({ prefixes: ['daily/a/'], nextPageToken: 'same-token' })),
-    ).rejects.toThrow('same pageToken twice')
+    ).rejects.toThrow('already used pageToken')
+  })
+
+  it('collectPrefixesFromPages throws when pageTokens cycle back to an earlier one', async () => {
+    const nextTokens: Record<string, string> = { first: 'token-a', 'token-a': 'token-b', 'token-b': 'token-a' }
+    await expect(
+      collectPrefixesFromPages(async (pageToken) => ({
+        prefixes: [],
+        nextPageToken: nextTokens[pageToken ?? 'first'],
+      })),
+    ).rejects.toThrow('already used pageToken')
+  })
+
+  it('isNotFoundError treats only 404 as a missing bucket', () => {
+    expect(isNotFoundError({ code: 404, message: 'The specified bucket does not exist.' })).toBe(true)
+    expect(isNotFoundError({ code: 403, message: 'Permission denied' })).toBe(false)
+    expect(isNotFoundError(new Error('network'))).toBe(false)
+    expect(isNotFoundError(null)).toBe(false)
   })
 })
 

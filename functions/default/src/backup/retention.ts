@@ -133,14 +133,18 @@ export const collectPrefixesFromPages = async (
   fetchPage: (pageToken: string | null) => Promise<unknown>,
 ): Promise<string[]> => {
   const collected: string[] = []
+  const usedPageTokens = new Set<string>()
   let pageToken: string | null = null
 
   do {
     const apiResponse = await fetchPage(pageToken)
     collected.push(...getPrefixesFromApiResponse(apiResponse))
     const nextPageToken = getNextPageToken(apiResponse)
-    if (nextPageToken != null && nextPageToken === pageToken) {
-      throw new Error('GCS list returned the same pageToken twice')
+    if (nextPageToken != null) {
+      if (usedPageTokens.has(nextPageToken)) {
+        throw new Error('GCS list returned an already used pageToken')
+      }
+      usedPageTokens.add(nextPageToken)
     }
     pageToken = nextPageToken
   } while (pageToken != null)
@@ -287,6 +291,25 @@ const cleanupStorageTier = async (bucketName: string, tier: BackupTier, dryRun: 
   }
 }
 
+export const isNotFoundError = (error: unknown): boolean =>
+  typeof error === 'object' && error != null && 'code' in error && error.code === 404
+
+/**
+ * Bucket.exists() は storage.buckets.get が必要で、実行 SA（objectAdmin / objectViewer）には無い。
+ * 付与済みの storage.objects.list で確かめ、404 のときだけ「バケットなし」とする。
+ */
+const hasStorageBackupBucket = async (bucketName: string): Promise<boolean> => {
+  try {
+    await new Storage().bucket(bucketName).getFiles({ maxResults: 1, autoPaginate: false })
+    return true
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return false
+    }
+    throw error
+  }
+}
+
 export const runBackupRetentionCleanup = async (): Promise<void> => {
   const projectId = getProjectId()
   const dryRun = isRetentionDryRun()
@@ -301,7 +324,7 @@ export const runBackupRetentionCleanup = async (): Promise<void> => {
   })
 
   // Storage バックアップ用バケットが無い環境（development 等）でも Firestore 側の削除は続ける
-  const [storageBucketExists] = await new Storage().bucket(storageBucketName).exists()
+  const storageBucketExists = await hasStorageBackupBucket(storageBucketName)
   if (!storageBucketExists) {
     logger.warn('Storage backup bucket not found; skipping Storage retention', { storageBucketName })
   }
