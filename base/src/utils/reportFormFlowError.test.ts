@@ -16,8 +16,8 @@ beforeEach(() => {
 describe('buildFormFlowComponentInfo', () => {
   it('FirebaseError は code を付ける', () => {
     const error = new FirebaseError('functions/internal', 'internal')
-    expect(buildFormFlowComponentInfo('CartFormAnswer', 'save_attempt', error)).toBe(
-      'CartFormAnswer:save_attempt code=functions/internal',
+    expect(buildFormFlowComponentInfo('CartFormAnswer', 'confirm_order', error)).toBe(
+      'CartFormAnswer:confirm_order code=functions/internal',
     )
   })
 

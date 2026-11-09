@@ -18,13 +18,10 @@ import EventShop from '@shokujii/base/components/eventcreate/EventShop.vue'
 import EventMenu from '@shokujii/base/components/eventcreate/EventMenu.vue'
 import EventDetailCard from '@shokujii/base/components/eventcreate/EventDetailCard.vue'
 import EventFormSelectCard from '@shokujii/base/components/eventcreate/EventFormSelectCard.vue'
-import {
-  clearEventFormConfig,
-  getEventFormConfig,
-  listCommunityForms,
-  setEventFormFromCommunity,
-} from '@shokujii/base/apis/form.js'
+import { clearEventFormConfig, setEventFormFromCommunity } from '@shokujii/base/apis/form.js'
+import { fetchEventFormSourceId } from '@shokujii/base/stores/eventForm.js'
 import type { CommunityFormSummary } from '@shokujii/common/apis/form.js'
+import { toCommunityFormSummary } from '@shokujii/common/utils/communityFormSummary.js'
 import { isEventFormEditableStatus } from '@shokujii/common/schemas/formFields.js'
 import EventShopNotice from '@shokujii/base/components/eventcreate/EventShopNotice.vue'
 import EventEditStepNav from '@shokujii/base/components/eventcreate/EventEditStepNav.vue'
@@ -599,9 +596,30 @@ const canUseSecondarySave = computed(() => {
 
 const selectedCommunityFormId = ref('')
 const persistedCommunityFormId = ref<string | null>(null)
-const communityForms = ref<CommunityFormSummary[]>([])
-const eventFormLoading = ref(false)
-const eventFormLoadFailed = ref(false)
+const eventFormConfigLoading = ref(false)
+const eventFormConfigLoadFailed = ref(false)
+// フォーム一覧は既存のコミュニティ store の購読を使う（Functions を経由しない。#2492）
+const communityForms = computed<CommunityFormSummary[]>(() => {
+  if (paymentUiStrategy.value.isEnterpriseMode) {
+    return []
+  }
+  const assigned = persistedCommunityFormId.value ?? ''
+  return (communityStore.communityForms ?? [])
+    .map((form) => toCommunityFormSummary(form))
+    .filter((form) => !form.archived || form.form_id === assigned)
+})
+const eventFormLoading = computed(
+  () =>
+    eventFormConfigLoading.value ||
+    (!paymentUiStrategy.value.isEnterpriseMode &&
+      communityStore.community != null &&
+      communityStore.communityForms == null),
+)
+const eventFormLoadFailed = computed(
+  () =>
+    eventFormConfigLoadFailed.value ||
+    (!paymentUiStrategy.value.isEnterpriseMode && communityStore.communityFormsLoadFailed),
+)
 
 const canEditEventForm = computed(() => {
   const status = event.value?.event_status.value
@@ -620,45 +638,45 @@ const loadEventFormSelection = async () => {
       }
       persistedCommunityFormId.value = ''
       selectedCommunityFormId.value = ''
-      communityForms.value = []
-      eventFormLoadFailed.value = false
+      eventFormConfigLoadFailed.value = false
       return
     }
     const communityId = communityStore.community?.community_id
     if (communityId == null || communityId === '') {
       return
     }
-    eventFormLoading.value = true
-    eventFormLoadFailed.value = false
+    eventFormConfigLoading.value = true
+    eventFormConfigLoadFailed.value = false
     try {
       const eventId = persistedEventIdForMenus.value
-      const [formsRes, configRes] = await Promise.all([
-        listCommunityForms({ community_id: communityId }),
-        eventId != null && eventId !== ''
-          ? getEventFormConfig({ community_id: communityId, event_id: eventId })
-          : Promise.resolve({ data: { config: null } }),
-      ])
+      // 設定中のフォームは form_configs を直接読む（#2492）
+      const assigned = eventId != null && eventId !== '' ? await fetchEventFormSourceId(communityId, eventId) : ''
       if (seq !== eventFormLoadSeq) {
         return
       }
-      const assigned = configRes.data.config?.source_form_id ?? ''
-      communityForms.value = formsRes.data.forms.filter((form) => !form.archived || form.form_id === assigned)
       persistedCommunityFormId.value = assigned
       selectedCommunityFormId.value = assigned
     } catch {
       if (seq !== eventFormLoadSeq) {
         return
       }
-      eventFormLoadFailed.value = true
+      eventFormConfigLoadFailed.value = true
     } finally {
       if (seq === eventFormLoadSeq) {
-        eventFormLoading.value = false
+        eventFormConfigLoading.value = false
       }
     }
   }
   const pending = run()
   eventFormLoadPromise = pending
   await pending
+}
+
+const retryEventFormSelection = () => {
+  if (communityStore.communityFormsLoadFailed) {
+    communityStore.retryCommunityForms()
+  }
+  void loadEventFormSelection()
 }
 
 watch(
@@ -688,7 +706,7 @@ const persistEventFormSelection = async (eventId: string): Promise<boolean> => {
     }
     pending = eventFormLoadPromise
   }
-  if (persistedCommunityFormId.value == null || eventFormLoadFailed.value) {
+  if (persistedCommunityFormId.value == null || eventFormConfigLoadFailed.value) {
     return true
   }
   const communityId = communityStore.community?.community_id
@@ -1342,7 +1360,7 @@ const stepperItems = computed(() => [
                 :is-enterprise="paymentUiStrategy.isEnterpriseMode"
                 :canceled="event?.event_status.value === 'event_canceled'"
                 :not-editable="event != null && !canEditEventForm && event.event_status.value !== 'event_canceled'"
-                @retry="loadEventFormSelection"
+                @retry="retryEventFormSelection"
               />
               <event-edit-step-nav :visible="stepper === 4">
                 <v-btn

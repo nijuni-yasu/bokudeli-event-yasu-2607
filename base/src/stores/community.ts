@@ -97,7 +97,7 @@ export class BokudeliAlbumItem extends AlbumItem {
   }
 }
 
-const communityFormConverter: FirestoreDataConverter<CommunityForm> = {
+export const communityFormConverter: FirestoreDataConverter<CommunityForm> = {
   toFirestore(form: CommunityForm): DocumentData {
     return form.toFirestore()
   },

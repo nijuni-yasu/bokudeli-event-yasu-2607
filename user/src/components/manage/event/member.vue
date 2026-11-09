@@ -225,6 +225,7 @@ const downloadCsvFile = () => {
           v-if="eventStore.event != null"
           class="mt-8"
           :event="eventStore.event"
+          :orders="eventStore.orders ?? null"
           :resolve-user-path="getUserPath"
         />
       </v-col>

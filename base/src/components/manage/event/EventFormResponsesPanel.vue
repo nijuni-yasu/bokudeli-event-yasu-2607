@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { getCommunityForm, getEventFormConfig, listEventFormResponses } from '@shokujii/base/apis/form.js'
+import { fetchEventFormReference, fetchEventFormResponses } from '@shokujii/base/stores/eventForm.js'
 import FormAnswerFields from '@shokujii/base/components/forms/FormAnswerFields.vue'
 import FormLinkedText from '@shokujii/base/components/forms/FormLinkedText.vue'
 import UserAvatar from '@shokujii/base/components/UserAvatar.vue'
 import { buildEventFormResponseCsv, downloadMemberCsv } from '@shokujii/base/composable/memberCsvExport.js'
 import type { EventFormResponseFilter, EventFormResponseListItem } from '@shokujii/common/apis/form.js'
+import type { FormResponse } from '@shokujii/common/schemas/FormResponse.js'
+import type { EventMemberOrder } from '@shokujii/common/schemas/EventMemberOrder.js'
+import { buildEventFormResponseRows } from '@shokujii/common/utils/orderFormAnswers.js'
 import { omitHiddenFormFields, type FormField } from '@shokujii/common/schemas/formFields.js'
 import type { FormAnswerInput } from '@shokujii/common/utils/validateFormAnswers.js'
 import { convertToDatetime } from '@shokujii/common/utils/datetime.js'
@@ -21,36 +24,24 @@ type AssignedForm = {
 
 const props = defineProps<{
   event: BokudeliEvent
+  /** イベントの全注文（参加者画面の購読）。参加確定・取消の判定に使う。読み込み中は null */
+  orders: EventMemberOrder[] | null
   resolveUserPath: ResolveUserPathFn
 }>()
 
 const { t: $t } = useI18n()
 
 const isEnterprise = computed(() => props.event.enterprise_id != null && props.event.enterprise_id !== '')
-const responses = ref<EventFormResponseListItem[]>([])
+const rawResponses = ref<FormResponse[]>([])
 const assignedForm = ref<AssignedForm | null>(null)
-const loading = ref(false)
+const fetching = ref(false)
 const loadFailed = ref(false)
 const retryKey = ref(0)
 const selected = ref<EventFormResponseListItem | null>(null)
 const previewOpen = ref(false)
 const previewAnswers = ref<FormAnswerInput[]>([])
 
-const loadAssignedForm = async (communityId: string, eventId: string): Promise<AssignedForm | null> => {
-  const configResponse = await getEventFormConfig({ community_id: communityId, event_id: eventId })
-  const formId = configResponse.data.config?.source_form_id ?? ''
-  if (formId === '') {
-    return null
-  }
-  const formResponse = await getCommunityForm({ community_id: communityId, form_id: formId })
-  const form = formResponse.data.form
-  return {
-    name: form.name,
-    description: form.description,
-    fields: omitHiddenFormFields(form.fields),
-  }
-}
-
+// 設定・設問・回答を Firestore から直接読み、注文状態と組み合わせて画面で集計する（Functions を経由しない。#2492）
 watch(
   () => [props.event.community_id, props.event.event_id, props.event.enterprise_id, retryKey.value],
   async (_key, _previousKey, onCleanup) => {
@@ -58,40 +49,57 @@ watch(
     onCleanup(() => {
       cancelled = true
     })
-    responses.value = []
+    rawResponses.value = []
     assignedForm.value = null
     selected.value = null
     previewOpen.value = false
     loadFailed.value = false
-    loading.value = false
+    fetching.value = false
     if (props.event.enterprise_id != null && props.event.enterprise_id !== '') return
-    loading.value = true
+    fetching.value = true
     try {
-      const [ordered, canceled, form] = await Promise.all([
-        listEventFormResponses({
-          community_id: props.event.community_id,
-          event_id: props.event.event_id,
-          filter: 'confirmed',
-        }),
-        listEventFormResponses({
-          community_id: props.event.community_id,
-          event_id: props.event.event_id,
-          filter: 'canceled',
-        }),
-        loadAssignedForm(props.event.community_id, props.event.event_id),
+      // フォームが未設定でも、過去に設定していたときの回答は一覧に出す
+      const [reference, loaded] = await Promise.all([
+        fetchEventFormReference(props.event.community_id, props.event.event_id),
+        fetchEventFormResponses(props.event.community_id, props.event.event_id),
       ])
       if (!cancelled) {
-        responses.value = [...ordered.data.responses, ...canceled.data.responses]
-        assignedForm.value = form
+        rawResponses.value = loaded
+        assignedForm.value =
+          reference == null
+            ? null
+            : {
+                name: reference.form.name,
+                description: reference.form.description,
+                fields: omitHiddenFormFields(reference.form.fields),
+              }
       }
     } catch {
       if (!cancelled) loadFailed.value = true
     } finally {
-      if (!cancelled) loading.value = false
+      if (!cancelled) fetching.value = false
     }
   },
   { immediate: true },
 )
+
+const loading = computed(() => fetching.value || props.orders == null)
+
+/** 参加確定 → 取消の順。名前はユーザー store から引く（読み込み中は user_id） */
+const responses = computed<EventFormResponseListItem[]>(() => {
+  const rows = buildEventFormResponseRows({
+    responses: rawResponses.value,
+    // 注文の購読は event_id だけで絞るため、旧 Callable と同じくコミュニティとイベントで限定する
+    orders: (props.orders ?? []).filter(
+      (order) => order.community_id === props.event.community_id && order.event_id === props.event.event_id,
+    ),
+    displayNameOf: (userId) => useUserStore(userId).user?.user_name,
+  })
+  return [
+    ...rows.filter((row) => row.participation === 'confirmed'),
+    ...rows.filter((row) => row.participation === 'canceled'),
+  ]
+})
 
 const statusLabel = (value: EventFormResponseFilter) =>
   value === 'confirmed' ? $t('manage.forms.status_ordered') : $t('manage.forms.status_canceled')

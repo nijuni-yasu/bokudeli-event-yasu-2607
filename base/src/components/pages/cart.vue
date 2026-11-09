@@ -52,7 +52,7 @@ import {
 } from '@mdi/js'
 import { useI18n } from 'vue-i18n'
 import { createStripeCheckoutSession } from '@shokujii/base/apis/stripe'
-import { getEventFormPresence } from '@shokujii/base/apis/form'
+import { fetchEventFormReference } from '@shokujii/base/stores/eventForm.js'
 import {
   pfCartEnterpriseSubsidyBudgetLoader,
   fetchCartEnterpriseSubsidyBudget,
@@ -470,13 +470,11 @@ const loadFormPresence = async (event: BokudeliEvent, force = false) => {
   }
   formPresenceByKey.value = { ...formPresenceByKey.value, [key]: 'loading' }
   try {
-    const response = await getEventFormPresence({
-      community_id: event.community_id,
-      event_id: event.event_id,
-    })
+    // Functions を経由せず、フォーム設定と設問を直接読む（#2492）
+    const reference = await fetchEventFormReference(event.community_id, event.event_id)
     formPresenceByKey.value = {
       ...formPresenceByKey.value,
-      [key]: response.data.has_form ? 'yes' : 'no',
+      [key]: reference != null ? 'yes' : 'no',
     }
   } catch (error) {
     reportFormFlowError(error, { component: 'cart', stage: 'form_presence', target: event })

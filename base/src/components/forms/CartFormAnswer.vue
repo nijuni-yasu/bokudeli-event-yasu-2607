@@ -5,7 +5,12 @@ import { FirebaseError } from 'firebase/app'
 import FormAnswerFields from '@shokujii/base/components/forms/FormAnswerFields.vue'
 import FormLinkedText from '@shokujii/base/components/forms/FormLinkedText.vue'
 import ConfirmDialog from '@shokujii/base/components/ConfirmDialog.vue'
-import { getOrderFormForCart, saveOrderFormAttempt } from '@shokujii/base/apis/form.js'
+import {
+  fetchEventFormReference,
+  fetchMyFormResponse,
+  fetchMyLatestFormDraft,
+} from '@shokujii/base/stores/eventForm.js'
+import { parseOrderFormInvalidError } from '@shokujii/base/utils/orderFormInvalidError.js'
 import { createStripeCheckoutSession } from '@shokujii/base/apis/stripe'
 import { useCurrentUserStore } from '@shokujii/base/stores/currentUser'
 import { useCreateAppEventStore } from '@shokujii/base/composable/useAppEventStore.js'
@@ -27,11 +32,13 @@ import type {
 import {
   compactFormAnswerInput,
   hasUnansweredRequiredField,
+  validateFormAnswers,
   type FormAnswerInput,
   type FormValidationIssue,
 } from '@shokujii/common/utils/validateFormAnswers.js'
+import { buildOrderFormForAnswer, type OrderFormForAnswer } from '@shokujii/common/utils/orderFormAnswers.js'
 import type { FormField } from '@shokujii/common/schemas/formFields.js'
-import type { GetOrderFormForCartResponse } from '@shokujii/common/apis/form.js'
+import type { OrderFormSubmission } from '@shokujii/common/apis/form.js'
 import { reportFormFlowError, type FormFlowStage } from '@shokujii/base/utils/reportFormFlowError.js'
 
 const props = defineProps<{
@@ -48,20 +55,21 @@ const router = useRouter()
 const {
   cart,
   user: currentUser,
+  firebaseUser,
   personalInformation: currentUserPersonalInformation,
 } = storeToRefs(useCurrentUserStore())
 const createAppEventStore = useCreateAppEventStore()
 
 const loading = ref(true)
 const saving = ref(false)
-const form = ref<GetOrderFormForCartResponse | null>(null)
+const form = ref<OrderFormForAnswer | null>(null)
 const answers = ref<FormAnswerInput[]>([])
 const issues = ref<FormValidationIssue[]>([])
 const alertMessage = ref('')
 const isOpenAlert = ref(false)
 const openConfirmOrder = ref(false)
 const confirmDialogMessage = ref('')
-const pendingAttemptId = ref('')
+const pendingSubmission = ref<OrderFormSubmission | null>(null)
 const openUserParameterConfirm = ref(false)
 const targetUserParameter = ref('')
 
@@ -83,8 +91,8 @@ const getOrderErrorMessage = (error: unknown): string | null => {
 type StageTarget = { event: { community_id: string; event_id: string } } | undefined
 
 const reportStageError = (stage: FormFlowStage, error: unknown, item: StageTarget) => {
-  // 売り切れ等、理由を画面に出せる想定内の失敗は記録しない（サーバー側で ERROR に分類され、調査の妨げになる）
-  if (getOrderErrorMessage(error) != null) return
+  // 売り切れ・回答の不備など、理由を画面に出せる想定内の失敗は記録しない（サーバー側で ERROR に分類され、調査の妨げになる）
+  if (getOrderErrorMessage(error) != null || parseOrderFormInvalidError(error) != null) return
   reportFormFlowError(error, { component: 'CartFormAnswer', stage, target: item?.event })
 }
 
@@ -110,9 +118,7 @@ const fields = computed<FormField[]>(() => form.value?.fields ?? [])
 const hasUnansweredRequired = computed(() => hasUnansweredRequiredField(fields.value, answers.value))
 const formName = computed(() => form.value?.name ?? '')
 const formDescription = computed(() => form.value?.description ?? '')
-const showFormIntro = computed(
-  () => form.value?.has_form === true && (formName.value !== '' || formDescription.value !== ''),
-)
+const showFormIntro = computed(() => form.value != null && (formName.value !== '' || formDescription.value !== ''))
 const cartItemKey = computed(() =>
   cartItem.value == null ? '' : `${cartItem.value.event.community_id}\0${cartItem.value.event.event_id}`,
 )
@@ -141,7 +147,7 @@ const loadOrderForm = async (isCancelled: () => boolean, preserveAlert = false) 
   answers.value = []
   issues.value = []
   openConfirmOrder.value = false
-  pendingAttemptId.value = ''
+  pendingSubmission.value = null
   if (!preserveAlert) {
     isOpenAlert.value = false
   }
@@ -155,20 +161,38 @@ const loadOrderForm = async (isCancelled: () => boolean, preserveAlert = false) 
     showAlert($t('cart.form_load_failed'))
     return
   }
+  // カートは Auth の UID で購読されるため、プロフィール（users/{uid}）の読み込みを待たずに Auth の UID を使う
+  const userId = firebaseUser.value?.uid ?? currentUser.value?.id ?? ''
+  const isEnterpriseEvent = item.event.enterprise_id != null && item.event.enterprise_id !== ''
   loading.value = true
   try {
-    const response = await runStage('form_load', item, () =>
-      getOrderFormForCart({
-        community_id: item.event.community_id,
-        event_id: item.event.event_id,
-      }),
-    )
+    // 設定・設問・本人の回答を Firestore から直接読む（Functions のコールドスタートを避ける。#2492）
+    const loaded = await runStage('form_load', item, async () => {
+      const { community_id: communityId, event_id: eventId } = item.event
+      const reference = isEnterpriseEvent ? null : await fetchEventFormReference(communityId, eventId)
+      if (reference == null) {
+        return null
+      }
+      if (userId === '') {
+        throw new Error('current user not loaded')
+      }
+      const [confirmed, draft] = await Promise.all([
+        fetchMyFormResponse(communityId, eventId, userId),
+        fetchMyLatestFormDraft(communityId, eventId, userId, reference.form),
+      ])
+      return buildOrderFormForAnswer({
+        form: reference.form,
+        attempts: draft == null ? [] : [draft],
+        confirmed,
+      })
+    })
     if (isCancelled()) return
-    form.value = response.data
-    answers.value = (response.data.initial_answers ?? []).map((answer) => compactFormAnswerInput(answer))
-    if (!response.data.has_form) {
+    if (loaded == null) {
       void router.replace(props.resolveCartPath())
+      return
     }
+    form.value = loaded
+    answers.value = loaded.initial_answers.map((answer) => compactFormAnswerInput(answer))
   } catch {
     if (!isCancelled()) showAlert($t('cart.form_load_failed'))
   } finally {
@@ -178,7 +202,7 @@ const loadOrderForm = async (isCancelled: () => boolean, preserveAlert = false) 
 
 // カートの読み込み完了も監視し、読み込み後に対象が無いときも検出する
 watch(
-  [cartItemKey, () => cart.value != null],
+  [cartItemKey, () => cart.value != null, () => firebaseUser.value?.uid],
   async (_key, _previousKey, onCleanup) => {
     let cancelled = false
     onCleanup(() => {
@@ -189,35 +213,44 @@ watch(
   { immediate: true },
 )
 
-const persistAttempt = async (): Promise<string | null> => {
-  const key = cartItemKey.value
-  const item = cartItem.value
+/** 送信前に画面で検証する。不備があれば項目ごとの指摘を出して null を返す */
+const buildSubmission = (): OrderFormSubmission | null => {
   const current = form.value
-  if (item == null || current?.definition_version == null) {
+  if (current == null) {
     return null
   }
-  const definitionVersion = current.definition_version
-  const response = await runStage('save_attempt', item, () =>
-    saveOrderFormAttempt({
-      community_id: item.event.community_id,
-      event_id: item.event.event_id,
-      definition_version: definitionVersion,
-      answers: answers.value.map((answer) => compactFormAnswerInput(answer)),
-    }),
-  )
-  if (cartItemKey.value !== key) return null
-  if (response.data.issues != null && response.data.issues.length > 0) {
-    const stale = response.data.issues.some((issue) => issue.code === 'version_mismatch')
-    if (stale) {
-      showAlert($t('cart.form_definition_changed'))
-      await loadOrderForm(() => cartItemKey.value !== key, true)
-      return null
-    }
-    issues.value = response.data.issues
+  const submitted = answers.value.map((answer) => compactFormAnswerInput(answer))
+  const validated = validateFormAnswers({
+    fields: current.fields,
+    answers: submitted,
+    definitionVersion: current.definition_version,
+  })
+  if (!validated.ok) {
+    issues.value = validated.issues
     return null
   }
   issues.value = []
-  return response.data.attempt_id
+  return {
+    source_form_id: current.source_form_id,
+    definition_version: current.definition_version,
+    answers: submitted,
+  }
+}
+
+/** サーバーの検証で弾かれた回答を画面に反映する。該当しないエラーなら false */
+const applyServerFormIssues = async (error: unknown): Promise<boolean> => {
+  const serverIssues = parseOrderFormInvalidError(error)
+  if (serverIssues == null) {
+    return false
+  }
+  if (serverIssues.some((issue) => issue.code === 'version_mismatch')) {
+    const key = cartItemKey.value
+    showAlert($t('cart.form_definition_changed'))
+    await loadOrderForm(() => cartItemKey.value !== key, true)
+    return true
+  }
+  issues.value = serverIssues
+  return true
 }
 
 const ensureOrderAllowed = async (): Promise<boolean> => {
@@ -240,7 +273,7 @@ const ensureOrderAllowed = async (): Promise<boolean> => {
   return true
 }
 
-const startOrder = async (attemptId: string) => {
+const startOrder = async (submission: OrderFormSubmission) => {
   if (!(await ensureOrderAllowed())) {
     return
   }
@@ -258,12 +291,13 @@ const startOrder = async (attemptId: string) => {
           order_ids: orderIds,
           isPosted: false,
           origin: window.location.origin,
-          form_attempt_id: attemptId,
+          form_submission: submission,
         }),
       )
       window.location.href =
         response.data.url ?? props.resolveEventPath(item.event.community_account, item.event.event_id)
     } catch (error) {
+      if (await applyServerFormIssues(error)) return
       showAlert(getOrderErrorMessage(error) ?? $t('cart.payment_failed'))
     }
     return
@@ -275,11 +309,12 @@ const startOrder = async (attemptId: string) => {
         community_id: item.event.community_id,
         event_id: item.event.event_id,
         order_ids: orderIds,
-        form_attempt_id: attemptId,
+        form_submission: submission,
       }),
     )
     orderConfirmed = true
   } catch (error) {
+    if (await applyServerFormIssues(error)) return
     showAlert(getOrderErrorMessage(error) ?? $t('cart.order_failed'))
     return
   }
@@ -293,7 +328,7 @@ const startOrder = async (attemptId: string) => {
 }
 
 const onPrimary = async () => {
-  if (loading.value || saving.value || form.value?.has_form !== true) return
+  if (loading.value || saving.value || form.value == null) return
   const key = cartItemKey.value
   saving.value = true
   try {
@@ -301,17 +336,12 @@ const onPrimary = async () => {
       return
     }
     if (cartItemKey.value !== key) return
-    const attemptId = await persistAttempt()
-    if (cartItemKey.value !== key) return
-    if (attemptId == null) {
-      if (issues.value.length === 0 && !isOpenAlert.value) {
-        reportStageError('save_attempt', new Error('form attempt not created'), cartItem.value)
-        showAlert($t('cart.form_save_failed'))
-      }
+    const submission = buildSubmission()
+    if (submission == null) {
       return
     }
     if (needsStripe.value) {
-      await startOrder(attemptId)
+      await startOrder(submission)
       return
     }
     confirmDialogMessage.value = isNoOrderParticipationOnly.value
@@ -319,7 +349,7 @@ const onPrimary = async () => {
       : cartItem.value?.event.event_payment === 'user_on_day'
         ? $t('cart.confirm_order_participant_on_day')
         : $t('cart.confirm_order_community_bill')
-    pendingAttemptId.value = attemptId
+    pendingSubmission.value = submission
     openConfirmOrder.value = true
   } catch (error) {
     if (cartItemKey.value === key) {
@@ -331,10 +361,11 @@ const onPrimary = async () => {
 }
 
 const confirmOrderNow = async () => {
-  if (loading.value || saving.value || pendingAttemptId.value === '') return
+  const submission = pendingSubmission.value
+  if (loading.value || saving.value || submission == null) return
   saving.value = true
   try {
-    await startOrder(pendingAttemptId.value)
+    await startOrder(submission)
   } catch (error) {
     showAlert(getOrderErrorMessage(error) ?? $t('cart.order_failed'))
   } finally {
@@ -353,7 +384,7 @@ const confirmOrderNow = async () => {
       <h1 class="text-h5">{{ $t('cart.form_page_title') }}</h1>
     </div>
     <v-progress-linear v-if="loading" indeterminate color="primary" />
-    <template v-else-if="form?.has_form">
+    <template v-else-if="form != null">
       <v-sheet v-if="showFormIntro" color="surface" border rounded="lg" class="pa-4 mb-6">
         <h2
           v-if="formName !== ''"

@@ -7,7 +7,6 @@ export type FormFlowStage =
   | 'cart_gate'
   | 'form_load'
   | 'order_gate'
-  | 'save_attempt'
   | 'stripe_checkout'
   | 'confirm_order'
 
@@ -22,7 +21,7 @@ export type FormFlowErrorReport = {
   target?: FormFlowTarget
 }
 
-/** `CartFormAnswer:save_attempt code=functions/internal` の形にする */
+/** `CartFormAnswer:confirm_order code=functions/internal` の形にする */
 export function buildFormFlowComponentInfo(component: string, stage: FormFlowStage, error: unknown): string {
   const base = `${component}:${stage}`
   return error instanceof FirebaseError ? `${base} code=${error.code}` : base
